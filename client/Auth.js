@@ -1,7 +1,6 @@
 import { Button, StyleSheet, TextInput, Text, View } from "react-native";
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useUserData } from "./context/UserContext";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 
 const Auth = (props) => {
   const [username, setUsername] = useState();
@@ -10,74 +9,15 @@ const Auth = (props) => {
   const [confirmPass, setConfirmPass] = useState("");
   const [registerUI, setRegisterUI] = useState(false);
 
-  const { setUser } = useUserData();
+  const { userID, dispatchUserEvent } = useUserData();
 
-  const signUpUser = async () => {
-    if (username == "" || email == "" || password == "" || confirmPass == "") {
-      return;
+  //checks userID in real-time and navigates to screen accordingly
+  useEffect(() => {
+    if (userID !== "") {
+      props.navigation.replace("Home");
     }
-
-    if (confirmPass !== password) {
-      return;
-    }
-
-    try {
-      const res = await fetch(`http://192.168.1.222:5050/notify/user/new`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userName: username,
-          email,
-          password,
-          pushToken: "",
-        }),
-      });
-      const data = await res.json();
-      const jsonValue = JSON.stringify({
-        id: data._id,
-        userName: data.userName,
-        email: data.email,
-      });
-      AsyncStorage.setItem("user", jsonValue);
-      setUser({
-        id: data._id,
-        userName: data.userName,
-        email: data.email,
-      });
-      return props.navigation.replace("Home");
-    } catch (err) {
-      return console.log(err);
-    }
-  };
-
-  const loginUser = async () => {
-    if (email == "" || password == "") {
-      return;
-    }
-
-    try {
-      const res = await fetch(`http://192.168.1.222:5050/notify/user`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, password }),
-      });
-      const data = await res.json();
-      const jsonValue = JSON.stringify({
-        id: data._id,
-        userName: data.userName,
-        email: data.email,
-      });
-      AsyncStorage.setItem("user", jsonValue);
-      setUser({
-        id: data._id,
-        userName: data.userName,
-        email: data.email,
-      });
-      return props.navigation.replace("Home");
-    } catch (err) {
-      return console.log(err);
-    }
-  };
+    return () => {};
+  }, [userID]);
 
   return (
     <View>
@@ -143,7 +83,43 @@ const Auth = (props) => {
         )}
       </View>
       <View style={{ justifyContent: "center", alignItems: "center" }}>
-        <Button title="Submit" onPress={registerUI ? signUpUser : loginUser} />
+        <Button
+          title="Submit"
+          onPress={
+            registerUI
+              ? () => {
+                  if (
+                    confirmPass === password &&
+                    username !== "" &&
+                    email !== "" &&
+                    password !== "" &&
+                    confirmPass !== ""
+                  ) {
+                    dispatchUserEvent("REGISTER", {
+                      username: username,
+                      email: email,
+                      password: password,
+                    });
+                  } else {
+                    Alert.alert("Error", "Passwords do not match.", [
+                      { text: "OK" },
+                    ]);
+                  }
+                }
+              : () => {
+                  if (email !== "" && password !== "") {
+                    dispatchUserEvent("LOGIN", {
+                      email: email,
+                      password: password,
+                    });
+                  } else {
+                    Alert.alert("Error", "Please input your information.", [
+                      { text: "OK" },
+                    ]);
+                  }
+                }
+          }
+        />
       </View>
     </View>
   );

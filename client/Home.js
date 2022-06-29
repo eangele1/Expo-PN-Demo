@@ -3,7 +3,8 @@ import * as Notifications from "expo-notifications";
 import React, { useState, useEffect, useRef } from "react";
 import { View, Button, Platform, TextInput, StyleSheet } from "react-native";
 import { useUserData } from "./context/UserContext";
-import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getDatabase, ref, update, get, child } from "firebase/database";
+import RNPickerSelect from "react-native-picker-select";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -12,25 +13,6 @@ Notifications.setNotificationHandler({
     shouldSetBadge: false,
   }),
 });
-
-async function sendPushNotification(id, title, body, userName) {
-  const message = {
-    userID: id,
-    title: title,
-    text: body,
-    data: { navigateTo: "Secret", userName: userName },
-  };
-
-  await fetch("http://192.168.1.222:5050/notify/user/send-notification", {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Accept-Encoding": "gzip, deflate",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(message),
-  });
-}
 
 async function registerForPushNotificationsAsync() {
   let token;
@@ -65,106 +47,112 @@ async function registerForPushNotificationsAsync() {
 
 export default function Home(props) {
   //notification variables
-  const expoPushToken = useRef("");
   const notificationListener = useRef();
   const responseListener = useRef();
+  const [selectedUser, setSelectedUser] = useState(null);
 
-  const [userID, setUserID] = useState();
-  const [title, setTitle] = useState();
-  const [body, setBody] = useState();
+  //list of all the users in firebase
+  const [users, setUsers] = useState([]);
 
-  const { user, setUser } = useUserData();
+  //input for notification
+  const [title, setTitle] = useState("");
+  const [body, setBody] = useState("");
 
-  const signOutUser = async () => {
-    try {
-      await fetch(
-        `http://192.168.1.222:5050/notify/user/refresh-device-token`,
-        {
+  //firebase references for updating/retriving user device token
+  const { auth, userID } = useUserData();
+  const db = getDatabase();
+  const dbRef = ref(db);
+  const userRef = ref(db, "users/" + userID);
+
+  async function sendPushNotification(id, title, body) {
+    let token = "";
+
+    get(child(dbRef, "users/" + id))
+      .then((snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.val();
+          token = data.deviceToken;
+        }
+      })
+      .then(async () => {
+        const message = {
+          deviceToken: token,
+          title: title,
+          text: body,
+        };
+
+        await fetch("http://192.168.1.222:5050/notify/user/send-notification", {
           method: "POST",
           headers: {
             Accept: "application/json",
             "Accept-Encoding": "gzip, deflate",
             "Content-Type": "application/json",
           },
-          body: JSON.stringify({ email: user.email, deviceToken: "" }),
-        }
-      );
-    } catch (err) {
-      return console.log(err);
-    }
-    AsyncStorage.removeItem("user");
-    setUser({});
+          body: JSON.stringify(message),
+        });
+      })
+      .catch((error) => {
+        console.error(error);
+      });
+  }
 
-    props.navigation.reset({
-      index: 0,
-      routes: [{ name: "Auth" }],
-    });
-  };
-
-  const getUser = async () => {
-    const user = await AsyncStorage.getItem("user");
-
-    if (user === null) {
+  //checks on userID and executes when it changes
+  useEffect(() => {
+    if (userID === "") {
       props.navigation.reset({
         index: 0,
         routes: [{ name: "Auth" }],
       });
-      return 0;
-    } else {
-      setUser(JSON.parse(user));
-      return 1;
     }
-  };
+  }, [userID]);
 
   useEffect(() => {
-    (async () => {
-      const response = await getUser();
+    // gets device token for use with Expo's service
+    registerForPushNotificationsAsync().then(async (token) => {
+      //updates the token stored inside firebase for the current user.
+      update(userRef, {
+        deviceToken: token,
+      });
 
-      if (response === 0) {
-        return;
-      }
+      get(child(dbRef, "users/"))
+        .then((snapshot) => {
+          if (snapshot.exists()) {
+            const data = snapshot.val();
 
-      // gets device token for use with Expo's service
-      registerForPushNotificationsAsync()
-        .then(async (token) => {
-          await fetch(
-            `http://192.168.1.222:5050/notify/user/refresh-device-token`,
-            {
-              method: "POST",
-              headers: {
-                Accept: "application/json",
-                "Accept-Encoding": "gzip, deflate",
-                "Content-Type": "application/json",
-              },
-              body: JSON.stringify({
-                email: user.email,
-                deviceToken: token,
-              }),
-            }
-          );
-          expoPushToken.current = token;
-        })
-        .then();
+            let arr = Object.keys(data).map((key) => data[key]);
+            arr.map((item) => {
+              delete Object.assign(item, { ["label"]: item["name"] })["name"];
+              delete Object.assign(item, { ["value"]: item["id"] })["id"];
+            });
 
-      // This listener is fired whenever a notification is received while the app is foregrounded
-      notificationListener.current =
-        Notifications.addNotificationReceivedListener((notification) => {
-          //setNotification(notification);
-        });
-
-      // This listener is fired whenever a user taps on or interacts with a notification (works when app is foregrounded, backgrounded, or killed)
-      // This is where you would handle your notifications, and it varies depending on what you want the outcome to look like.
-      responseListener.current =
-        Notifications.addNotificationResponseReceivedListener((response) => {
-          const screenDest =
-            response.notification.request.content.data.navigateTo;
-          const name = response.notification.request.content.data.userName;
-
-          if (screenDest) {
-            props.navigation.navigate(screenDest, { name: name });
+            setUsers(arr);
+          } else {
+            setUsers([]);
           }
+        })
+        .catch((error) => {
+          console.error(error);
         });
-    })();
+    });
+
+    // This listener is fired whenever a notification is received while the app is foregrounded
+    notificationListener.current =
+      Notifications.addNotificationReceivedListener((notification) => {
+        //setNotification(notification);
+      });
+
+    // This listener is fired whenever a user taps on or interacts with a notification (works when app is foregrounded, backgrounded, or killed)
+    // This is where you would handle your notifications, and it varies depending on what you want the outcome to look like.
+    responseListener.current =
+      Notifications.addNotificationResponseReceivedListener((response) => {
+        const screenDest =
+          response.notification.request.content.data.navigateTo;
+        const name = response.notification.request.content.data.userName;
+
+        if (screenDest) {
+          props.navigation.navigate(screenDest, { name: name });
+        }
+      });
 
     return () => {
       notificationListener.current &&
@@ -180,15 +168,16 @@ export default function Home(props) {
     <View>
       <View style={{ height: 50 }} />
       <View style={{ justifyContent: "center", alignItems: "center" }}>
-        <Button title={"Sign Out"} onPress={signOutUser} />
+        <Button
+          title={"Sign Out"}
+          onPress={() => {
+            update(userRef, {
+              deviceToken: "",
+            });
+            auth.signOut();
+          }}
+        />
       </View>
-
-      <TextInput
-        style={styles.textInput}
-        onChangeText={setUserID}
-        value={userID}
-        placeholder="User ID"
-      />
 
       <TextInput
         style={styles.textInput}
@@ -204,14 +193,22 @@ export default function Home(props) {
         placeholder="Message"
       />
 
+      <RNPickerSelect
+        onValueChange={(value) => setSelectedUser(value)}
+        items={users}
+      />
+
       <View style={{ justifyContent: "center", alignItems: "center" }}>
         <Button
           title="Send Notification"
           onPress={async () => {
             if (title !== "" && body !== "") {
-              await sendPushNotification(userID, title, body, user.userName);
+              await sendPushNotification(selectedUser, title, body);
             }
           }}
+          disabled={
+            title == "" || body == "" || selectedUser == null ? true : false
+          }
         />
       </View>
     </View>

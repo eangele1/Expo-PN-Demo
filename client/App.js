@@ -7,13 +7,16 @@ import Auth from "./Auth";
 import Home from "./Home";
 import Secret from "./Secret";
 
+//executes connection to Firebase
+import "./firebase.js";
+
 const Stack = createNativeStackNavigator();
 
 export default function App() {
   return (
     <UserProvider>
       <NavigationContainer>
-        <Stack.Navigator initialRouteName="Home">
+        <Stack.Navigator initialRouteName="Auth">
           <Stack.Screen
             name="Auth"
             options={{ headerShown: false }}
